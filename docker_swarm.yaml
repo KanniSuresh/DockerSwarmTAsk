@@ -1,0 +1,82 @@
+---
+
+- name: Install Docker
+  hosts: all
+  become: true
+  tasks:
+    - name: Install required packages
+      apt:
+        name: ['apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common']
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+
+    - name: Start and enable Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Install Python and pip on Debian
+      apt:
+        name: ['python3', 'python3-pip']
+        state: present
+      when: ansible_os_family == 'Debian'
+
+    - name: Install pip package (if needed)
+      package:
+        name: python3-pip
+        state: present
+      when: ansible_os_family == 'Debian'
+
+    - name: Install Docker Python Package
+      pip:
+        name: docker
+
+- name: Initialize Docker Swarm on the first manager
+  hosts: managers[0]
+  become: true
+  tasks:
+    - name: Initialize Docker Swarm
+      docker_swarm:
+        state: present
+        advertise_addr: 172.31.0.170:2377
+      register: swarm_init_output
+
+- name: Join other managers to the Swarm
+  hosts: managers[1:]
+  become: true
+  tasks:
+    - name: Join Docker Swarm as Manager
+      docker_swarm:
+        state: join
+        timeout: 60
+        advertise_addr: enp0s8:2377
+        join_token: "{{ hostvars[groups['managers'][0]]['swarm_init_output']['swarm_facts']['JoinTokens']['Manager'] }}"
+        remote_addrs: "{{ groups['managers'][0] }}"
+      when: "'{{ groups['managers'][0] }}' != inventory_hostname"
+
+- name: Join the worker node to the Swarm
+  hosts: workers
+  become: true
+  tasks:
+    - name: Join Docker Swarm as Worker
+      docker_swarm:
+        state: join
+        timeout: 60
+        advertise_addr: enp0s8:2377
+        join_token: "{{ hostvars[groups['managers'][0]]['swarm_init_output']['swarm_facts']['JoinTokens']['Worker'] }}"
+        remote_addrs: "{{ groups['managers'][0] }}"
